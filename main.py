@@ -3,6 +3,8 @@ import json
 from contextlib import AsyncExitStack, asynccontextmanager
 from asyncio_mqtt import Client, MqttError
 from pytwinkle import Twinkle
+import subprocess
+import time
 
 
 async def advanced():
@@ -38,14 +40,6 @@ async def advanced():
         # loggers. Otherwise, we may miss retained messages.
         await client.subscribe("sip/a/#")
 
-        # Publish a random value to each of these topics
-        topics = (
-            "sip/a/",
-        )
-        task = asyncio.create_task(post_to_topics(client, topics))
-
-        tasks.add(task)
-
         # start sip service
 
         task = asyncio.create_task(mTP.run())
@@ -57,21 +51,11 @@ async def advanced():
         await asyncio.gather(*tasks)
 
 
-async def post_to_topics(client, topics):
-    # while True:
-    #     for topic in topics:
-    #         message = json.dumps({"msg": "hihihi", "number": "hey "})
-    #         print(f'[topic="{topic}"] Publishing message={message}')
-    #         await client.publish(topic, message, qos=1)
-    #         await asyncio.sleep(2)
-    pass
-
-
 async def log_messages(messages, template):
 
     async for message in messages:
         # UTF8-encoded string (hence the `bytes.decode` call).
-        logMSG = template.format(message.payload.decode())
+        # logMSG = template.format(message.payload.decode())
         # print(logMSG)
         decoded_message = str(message.payload.decode("utf-8"))
         res = json.loads(decoded_message)
@@ -81,9 +65,11 @@ async def log_messages(messages, template):
         if msg == 'call':
             print("call the number " + number)
             mTP.call(number)
-        elif msg == 'end':
-            print("end the call")
+        elif msg == 'bye':
+            print("bye the call")
             mTP.bye()
+        elif msg == 'test':
+            print("test")
 
 
 async def cancel_tasks(tasks):
@@ -104,7 +90,6 @@ async def main():
     while True:
         try:
             await advanced()
-
         except MqttError as error:
             print(
                 f'Error "{error}". Reconnecting in {reconnect_interval} seconds.')
@@ -118,7 +103,6 @@ def callback(event, *args):
         print("registration succeeded, uri: %s, expires in %s seconds" %
               (uri, expires))
         # The module keeps the session, you havent to register
-        # mTP.call("0935932247")
     if event == "new_msg":
         msg = args[0]
         print("new_msg!: "+str(msg))
@@ -134,15 +118,23 @@ def callback(event, *args):
     if event == "answered_call":
         call = args[0]
         print("answered: %s" % (str(call)))
+        message = json.dumps({"msg": "answercall", "number": "1"})
+        topic = "sip/a"
+        mqtt_pub(topic, message)
 
     if event == "ended_call":
         line = args[0]
         print("call ended, line: %s" % (line))
+        message = json.dumps({"msg": "endcall", "number": "1"})
+        topic = "sip/a"
+        mqtt_pub(topic, message)
 
 
-async def sip():
-    # Create a Twinkle instance
-    mTP.run()
+def mqtt_pub(topic, message):
+    p = subprocess.Popen(['python', 'mqtt_pub.py', '--topic',
+                          topic, '--msg', message])
+    time.sleep(1)
+    p.kill()
 
 
 if __name__ == "__main__":
