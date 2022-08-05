@@ -5,6 +5,10 @@ from asyncio_mqtt import Client, MqttError
 from pytwinkle import Twinkle
 import subprocess
 import time
+import os
+import signal
+
+pid = 0
 
 
 async def advanced():
@@ -15,12 +19,12 @@ async def advanced():
         stack.push_async_callback(cancel_tasks, tasks)
 
         # Connect to the MQTT broker
-        client = Client("127.0.0.1")
+        client = Client("192.168.100.2")
         await stack.enter_async_context(client)
 
         # You can create any number of topic filters
         topic_filters = (
-            "sip/a/#",
+            "status",
         )
         for topic_filter in topic_filters:
             # Log all messages that matches the filter
@@ -38,13 +42,7 @@ async def advanced():
         # Subscribe to topic(s)
         # 🤔 Note that we subscribe *after* starting the message
         # loggers. Otherwise, we may miss retained messages.
-        await client.subscribe("sip/a/#")
-
-        # start sip service
-
-        task_sip = asyncio.create_task(mTP.run())
-
-        tasks.add(task_sip)
+        await client.subscribe("status")
 
         # Wait for everything to complete (or fail due to, e.g., network
         # errors)
@@ -58,19 +56,15 @@ async def log_messages(messages, template):
         # logMSG = template.format(message.payload.decode())
         # print(logMSG)
         decoded_message = str(message.payload.decode("utf-8"))
-        res = json.loads(decoded_message)
-        msg = res.get("msg")
-        number = res.get("number")
-        print(f"msg: {msg} number: {number}")
-        if msg == 'call':
-            print("call the number " + number)
-            mTP.call(number)
-        elif msg == 'bye':
-            print("bye the call")
-            mTP.bye()
-            message = json.dumps({"msg": "endcall", "number": "1"})
-            topic = "sip/a"
-            mqtt_pub(topic, message)
+        # print(decoded_message)
+        if decoded_message == 'sip_start':
+            print("sip service start")
+            pro = subprocess.Popen('python main.py', stdout=subprocess.PIPE,
+                                   shell=True, preexec_fn=os.setsid)
+            pid = pro.pid
+        elif decoded_message == 'sip_stop':
+            print("sip service stop")
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
 
 
 async def cancel_tasks(tasks):
@@ -98,53 +92,5 @@ async def main():
             await asyncio.sleep(reconnect_interval)
 
 
-def callback(event, *args):
-    if event == "registration_succeeded":
-        uri, expires = args
-        print("registration succeeded, uri: %s, expires in %s seconds" %
-              (uri, expires))
-        # The module keeps the session, you havent to register
-    if event == "new_msg":
-        msg = args[0]
-        print("new_msg!: "+str(msg))
-
-    if event == "incoming_call":
-        call = args[0]
-        print("call: "+str(call))
-        mTP.answer()
-        message = json.dumps({"msg": "answercall", "number": "1"})
-        topic = "sip/a"
-        mqtt_pub(topic, message)
-
-    if event == "cancelled_call":
-        line = args[0]
-        print("call cancelled, line: %s" % (line))
-        message = json.dumps({"msg": "cancelled", "number": "1"})
-        topic = "sip/a"
-        mqtt_pub(topic, message)
-
-    if event == "answered_call":
-        call = args[0]
-        print("answered: %s" % (str(call)))
-        message = json.dumps({"msg": "answercall", "number": "1"})
-        topic = "sip/a"
-        mqtt_pub(topic, message)
-
-    if event == "ended_call":
-        line = args[0]
-        print("call ended, line: %s" % (line))
-        message = json.dumps({"msg": "endcall", "number": "1"})
-        topic = "sip/a"
-        mqtt_pub(topic, message)
-
-
-def mqtt_pub(topic, message):
-    p = subprocess.Popen(['python', 'mqtt_pub.py', '--topic',
-                          topic, '--msg', message])
-    time.sleep(1)
-    p.kill()
-
-
 if __name__ == "__main__":
-    mTP = Twinkle(callback)
     asyncio.run(main())
